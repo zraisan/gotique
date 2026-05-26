@@ -1,4 +1,4 @@
-package models
+package openai
 
 import (
 	"bytes"
@@ -10,26 +10,38 @@ import (
 	"strings"
 )
 
-type OpenAI struct {
-	name     string
+type Provider struct {
 	endpoint string
 	apiKey   string
 }
 
-func NewOpenAI(apiKey string, model string) *OpenAI {
-	return &OpenAI{
-		name:     model,
+type Option func(*Provider)
+
+func New(apiKey string, opts ...Option) *Provider {
+	provider := &Provider{
 		endpoint: "https://api.openai.com/v1/responses",
 		apiKey:   apiKey,
 	}
+
+	for _, opt := range opts {
+		opt(provider)
+	}
+
+	return provider
 }
 
-type openAIRequest struct {
+func WithEndpoint(endpoint string) Option {
+	return func(provider *Provider) {
+		provider.endpoint = endpoint
+	}
+}
+
+type request struct {
 	Model string `json:"model"`
 	Input string `json:"input"`
 }
 
-type openAIResponse struct {
+type response struct {
 	OutputText string `json:"output_text"`
 	Output     []struct {
 		Type    string `json:"type"`
@@ -40,9 +52,9 @@ type openAIResponse struct {
 	} `json:"output"`
 }
 
-func (p *OpenAI) Generate(ctx context.Context, prompt string) (string, error) {
-	body := openAIRequest{
-		Model: p.name,
+func (p *Provider) Generate(ctx context.Context, model string, prompt string) (string, error) {
+	body := request{
+		Model: model,
 		Input: prompt,
 	}
 
@@ -75,7 +87,7 @@ func (p *OpenAI) Generate(ctx context.Context, prompt string) (string, error) {
 		return "", fmt.Errorf("openai request failed: %s: %s", resp.Status, string(respBody))
 	}
 
-	var result openAIResponse
+	var result response
 	if err := json.Unmarshal(respBody, &result); err != nil {
 		return "", err
 	}
@@ -83,7 +95,7 @@ func (p *OpenAI) Generate(ctx context.Context, prompt string) (string, error) {
 	return result.text(), nil
 }
 
-func (r *openAIResponse) text() string {
+func (r *response) text() string {
 	if r.OutputText != "" {
 		return r.OutputText
 	}
