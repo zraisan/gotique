@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+
+	"github.com/zraisan/gotique/models"
 )
 
 type Provider struct {
@@ -15,30 +17,10 @@ type Provider struct {
 	apiKey   string
 }
 
-type Option func(*Provider)
-
-func New(apiKey string, opts ...Option) *Provider {
-	provider := &Provider{
-		endpoint: "https://api.openai.com/v1/responses",
-		apiKey:   apiKey,
-	}
-
-	for _, opt := range opts {
-		opt(provider)
-	}
-
-	return provider
-}
-
-func WithEndpoint(endpoint string) Option {
-	return func(provider *Provider) {
-		provider.endpoint = endpoint
-	}
-}
-
 type request struct {
-	Model string `json:"model"`
-	Input string `json:"input"`
+	Model        string `json:"model"`
+	Instructions string `json:"instructions,omitempty"`
+	Input        string `json:"input"`
 }
 
 type response struct {
@@ -52,47 +34,69 @@ type response struct {
 	} `json:"output"`
 }
 
-func (p *Provider) Generate(ctx context.Context, model string, prompt string) (string, error) {
+func New(apiKey string, endpoint ...string) *Provider {
+	providerEndpoint := "https://api.openai.com/v1/responses"
+	if len(endpoint) > 0 && endpoint[0] != "" {
+		providerEndpoint = endpoint[0]
+	}
+
+	return &Provider{
+		endpoint: providerEndpoint,
+		apiKey:   apiKey,
+	}
+}
+
+func (p *Provider) Generate(ctx context.Context, modelReq models.Request) (*models.Response, error) {
+	instructionParts := []string{}
+	if modelReq.SystemPrompt != "" {
+		instructionParts = append(instructionParts, modelReq.SystemPrompt)
+	}
+
+	instructionParts = append(instructionParts, modelReq.Instructions...)
+
 	body := request{
-		Model: model,
-		Input: prompt,
+		Model:        modelReq.Model,
+		Instructions: strings.Join(instructionParts, "\n"),
+		Input:        modelReq.Input,
 	}
 
 	payload, err := json.Marshal(body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+p.apiKey)
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return "", fmt.Errorf("openai request failed: %s: %s", resp.Status, string(respBody))
+		return nil, fmt.Errorf("openai request failed: %s: %s", resp.Status, string(respBody))
 	}
 
 	var result response
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return "", err
+		return nil, err
 	}
 
-	return result.text(), nil
+	return &models.Response{
+		Text: result.text(),
+	}, nil
 }
 
 func (r *response) text() string {

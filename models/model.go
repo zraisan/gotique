@@ -5,6 +5,10 @@ import (
 	"errors"
 )
 
+type Provider interface {
+	Generate(ctx context.Context, req Request) (*Response, error)
+}
+
 type Model struct {
 	name     string
 	provider Provider
@@ -17,26 +21,31 @@ func New(name string, provider Provider) Model {
 	}
 }
 
-func NewModel(name string, provider Provider) Model {
-	return New(name, provider)
-}
-
 func (m Model) Name() string {
 	return m.name
 }
 
-func (m Model) Generate(ctx context.Context, prompt string) (string, error) {
+func (m Model) Generate(ctx context.Context, req Request) (*Response, error) {
 	if m.name == "" {
-		return "", errors.New("model name is required")
+		return nil, errors.New("model name is required")
 	}
 
 	if m.provider == nil {
-		return "", errors.New("model provider is required")
+		return nil, errors.New("model provider is required")
 	}
 
-	return m.provider.Generate(ctx, m.name, prompt)
+	req.Model = m.name
+
+	return m.provider.Generate(ctx, req)
 }
 
-type Provider interface {
-	Generate(ctx context.Context, model string, prompt string) (string, error)
+type Request struct {
+	Model        string
+	SystemPrompt string
+	Instructions []string
+	Input        string
+}
+
+type Response struct {
+	Text string
 }
